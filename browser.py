@@ -90,9 +90,9 @@ class AgentBrowser:
         
         # Set up network logging
         if config.LOG_REQUESTS:
-            await self.page.on("request", self._on_request)
+            self.page.on("request", self._on_request)
         if config.LOG_RESPONSES:
-            await self.page.on("response", self._on_response)
+            self.page.on("response", self._on_response)
         
         return self
     
