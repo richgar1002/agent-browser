@@ -2,33 +2,28 @@
 
 AI-first headless browser with session persistence, network interception, and REST API.
 
-## Features
+## Phase 1 - MVP ✅
 
-### Core
-- **Headless mode** — Fast, no UI overhead
-- **API-first** — Control via REST API
-- **Persistent sessions** — Stay logged in across restarts
-- **Screenshots** — Visual confirmation
+### What's Built
 
-### Automation
-- **Click, fill, type** — All standard interactions
-- **JavaScript injection** — Run custom scripts
-- **Element waiting** — Wait for elements to appear
-
-### Network
-- **Request/response logging** — See all network traffic
-- **Request blocking** — Block ads, trackers
-- **HAR export** — Save network logs
-
-### Security
-- **Cookie vault** — Secure session storage
-- **Proxy support** — Route through proxies
-- **Configurable user agent**
+| Feature | Status |
+|---------|--------|
+| Headless browser (Playwright) | ✅ |
+| Basic navigation | ✅ |
+| Click/Fill interaction | ✅ |
+| Screenshots | ✅ |
+| Session persistence | ✅ |
+| REST API | ✅ |
+| CLI | ✅ |
+| Error handling + retry | ✅ |
+| Session pooling | ✅ |
+| Network interception | ✅ |
+| Ad/tracker blocking | ✅ |
 
 ## Quick Start
 
 ```bash
-# Install
+# Install dependencies
 pip install -r requirements.txt
 
 # Install Playwright browsers
@@ -36,34 +31,101 @@ playwright install chromium
 
 # Run API
 python api.py
+
+# Or use CLI
+python cli.py goto https://example.com
+python cli.py screenshot --path screenshot.png
+python cli.py session list
 ```
 
-## Example Usage
+## CLI Commands
+
+```bash
+# Navigation
+python cli.py goto https://tradingview.com
+python cli.py screenshot --url https://example.com
+python cli.py click .login-btn --url https://example.com
+python cli.py fill #username myuser --url https://example.com
+
+# JavaScript
+python cli.py evaluate "document.title"
+
+# Network
+python cli.py network --url https://example.com
+
+# Sessions
+python cli.py session list
+python cli.py session delete my_session
+```
+
+## Python SDK
 
 ```python
 from browser import create_browser
 
-async def main():
-    async with create_browser("my_session") as browser:
-        # Navigate
-        await browser.go_to("https://example.com")
-        
-        # Fill form
-        await browser.fill("#username", "myuser")
-        await browser.fill("#password", "mypass")
-        await browser.click(".login-btn")
-        
-        # Wait for dashboard
-        await browser.wait_for_selector(".dashboard")
-        
-        # Screenshot
-        await browser.screenshot("dashboard.png")
-        
-        # Get data
-        prices = await browser.get_all_text(".price")
-
-asyncio.run(main())
+async with create_browser("trading") as b:
+    await b.go_to("https://tradingview.com")
+    await b.wait_for_selector(".chart")
+    await b.screenshot("chart.png")
+    
+    # Fill form
+    await b.fill("#username", "user")
+    await b.fill("#password", "pass")
+    await b.click(".login-btn")
 ```
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     Agent Browser                            │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  ┌─────────────┐   ┌─────────────┐   ┌─────────────┐       │
+│  │    CLI     │   │ REST API   │   │ Python SDK  │       │
+│  └──────┬──────┘   └──────┬──────┘   └──────┬──────┘       │
+│         │                 │                 │              │
+│  ┌──────▼─────────────────▼─────────────────▼──────┐       │
+│  │           Enhanced Browser Engine               │       │
+│  │  - Retry logic    - Error handling             │       │
+│  │  - Session pool   - Network interception       │       │
+│  └─────────────────────┬───────────────────────┘       │
+│                          │                                 │
+│  ┌───────────────────────▼───────────────────────┐       │
+│  │            Playwright (Chromium)            │       │
+│  └──────────────────────────────────────────────┘       │
+│                                                              │
+│  ┌──────────────────────────────────────────────┐         │
+│  │                 Storage                      │         │
+│  │  Sessions │ Cookies │ Screenshots │ Logs     │         │
+│  └──────────────────────────────────────────────┘         │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Features
+
+### Session Management
+- Persistent sessions (cookies, localStorage)
+- Session pooling for fast context switching
+- Auto-cleanup of idle sessions
+
+### Error Handling
+- Automatic retry with exponential backoff
+- Structured error logging
+- Recovery from common failures
+
+### Network
+- Request/response logging
+- API call detection
+- Ad/tracker blocking
+- HAR export
+
+### Automation
+- Click, fill, type
+- JavaScript injection
+- Element waiting
+- Form handling
 
 ## API Endpoints
 
@@ -79,32 +141,33 @@ asyncio.run(main())
 
 ## Configuration
 
-Set environment variables:
 ```env
 HEADLESS=true
 VIEWPORT_WIDTH=1920
 VIEWPORT_HEIGHT=1080
 DEFAULT_TIMEOUT=30000
-PROXY_SERVER=http://proxy:8080
+SESSION_EXPIRY_HOURS=168
 ```
 
-## Architecture
+## Requirements
 
-```
-┌─────────────┐
-│  REST API   │ (FastAPI)
-└──────┬──────┘
-       │
-┌──────▼──────┐
-│  Browser    │ (Playwright)
-│  - Page     │
-│  - Context  │
-└──────┬──────┘
-       │
-┌──────▼──────┐
-│  Storage    │
-│  - Sessions │
-│  - Cookies  │
-│  - Screens  │
-└─────────────┘
-```
+- Python 3.10+
+- Playwright
+- Chromium browser
+
+## Roadmap
+
+### Phase 2 - Automation
+- [ ] JavaScript injection wrapper
+- [ ] Form builders
+- [ ] Recording/playback
+
+### Phase 3 - AI Integration
+- [ ] Page summarization (LLM)
+- [ ] Visual QA
+- [ ] Smart selectors
+
+### Phase 4 - Enterprise
+- [ ] Multi-user support
+- [ ] Team workspaces
+- [ ] Cloud sync
