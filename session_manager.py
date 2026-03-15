@@ -78,7 +78,7 @@ class SessionManager:
                     "has_cookies": bool(data.get("cookies")),
                     "has_storage": bool(data.get("local_storage"))
                 }
-            except:
+            except (json.JSONDecodeError, IOError, KeyError):
                 pass
         
         return sessions
@@ -98,7 +98,7 @@ class SessionManager:
                 if datetime.now() - saved_at > expiry:
                     path.unlink()
                     removed += 1
-            except:
+            except (json.JSONDecodeError, IOError, KeyError):
                 pass
         
         return removed

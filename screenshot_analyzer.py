@@ -46,7 +46,7 @@ class ScreenshotAnalyzer:
             self.ollama_available = response.status_code == 200
             if self.ollama_available:
                 logger.info("Ollama is available for analysis")
-        except:
+        except (requests.RequestException, ConnectionError, TimeoutError):
             logger.info("Ollama not available, using basic OCR")
     
     def analyze(self, image_path: str = None, image_data: str = None) -> ScreenAnalysis:

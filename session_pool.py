@@ -94,7 +94,7 @@ class SessionPool:
         """Recreate browser for session"""
         try:
             await session.browser.close()
-        except:
+        except Exception:
             pass
         
         session.browser = create_enhanced_browser(session.name)
@@ -120,7 +120,7 @@ class SessionPool:
         if session_name in self.sessions:
             try:
                 await self.sessions[session_name].browser.close()
-            except:
+            except Exception:
                 pass
             del self.sessions[session_name]
             logger.info(f"Destroyed session: {session_name}")
