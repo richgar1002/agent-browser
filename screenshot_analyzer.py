@@ -4,6 +4,7 @@ OCR, visual element detection, and AI-powered page understanding
 """
 import base64
 import logging
+import os
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 import json
@@ -100,7 +101,7 @@ class ScreenshotAnalyzer:
             import pytesseract
             from PIL import Image
             
-            if image_source.startswith('/'):
+            if os.path.exists(image_source):
                 img = Image.open(image_source)
             else:
                 # Base64
@@ -216,7 +217,7 @@ Provide a 1-2 sentence summary of what this page is about."""
             import numpy as np
             
             # Load image
-            if screenshot.startswith('/'):
+            if os.path.exists(screenshot):
                 img = Image.open(screenshot)
             else:
                 import io

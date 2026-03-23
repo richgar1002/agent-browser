@@ -8,13 +8,24 @@ import json
 import uuid
 import os
 import logging
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, List, Any
 from dataclasses import dataclass, field
 
-import playwright.async_api as pw
-from playwright.async_api import async_playwright, Browser, Page, Request, Response
+try:
+    import playwright.async_api as pw
+    from playwright.async_api import async_playwright, Browser, Page, Request, Response
+    _PLAYWRIGHT_IMPORT_ERROR = None
+except ModuleNotFoundError as exc:
+    pw = None  # type: ignore[assignment]
+    async_playwright = None  # type: ignore[assignment]
+    Browser = Any  # type: ignore[misc,assignment]
+    Page = Any  # type: ignore[misc,assignment]
+    Request = Any  # type: ignore[misc,assignment]
+    Response = Any  # type: ignore[misc,assignment]
+    _PLAYWRIGHT_IMPORT_ERROR = exc
 
 import config
 from network_logger import NetworkLogger
@@ -54,7 +65,7 @@ class EnhancedAgentBrowser:
     def __init__(self, session_name: str = "default", user_id: str = None):
         self.playwright = None
         self.browser: Optional[Browser] = None
-        self.context: Optional[pw.Context] = None
+        self.context: Optional[Any] = None
         self.page: Optional[Page] = None
         
         self.session_name = session_name
@@ -63,6 +74,7 @@ class EnhancedAgentBrowser:
         # Network logging
         self.network_logger = NetworkLogger()
         self.network_interception_enabled = False
+        self._request_started: Dict[str, float] = {}
         
         # Current state
         self.current_url = ""
@@ -103,6 +115,12 @@ class EnhancedAgentBrowser:
     
     async def start(self, headless: bool = None, memory_enabled: bool = True):
         """Start the browser"""
+        if _PLAYWRIGHT_IMPORT_ERROR:
+            raise RuntimeError(
+                "Playwright is not installed. Run `pip install -r requirements.txt` "
+                "and then `playwright install chromium`."
+            ) from _PLAYWRIGHT_IMPORT_ERROR
+
         headless = headless if headless is not None else config.HEADLESS
         
         self.playwright = await async_playwright().start()
@@ -121,7 +139,13 @@ class EnhancedAgentBrowser:
                 "password": config.PROXY_PASSWORD
             }
         
-        self.browser = await self.playwright.chromium.launch(**launch_options)
+        try:
+            self.browser = await self.playwright.chromium.launch(**launch_options)
+        except Exception as e:
+            raise RuntimeError(
+                "Failed to launch Chromium. Ensure Playwright browsers are installed: "
+                "`playwright install chromium`."
+            ) from e
         
         # Create context with viewport
         context_options = {
@@ -140,11 +164,14 @@ class EnhancedAgentBrowser:
         # Create page
         self.page = await self.context.new_page()
         
-        # Set up network logging
-        if config.LOG_REQUESTS:
-            self.page.on("request", self._on_request)
-        if config.LOG_RESPONSES:
-            self.page.on("response", self._on_response)
+        # Set up network observation and interception hooks.
+        self.page.on("request", self._on_request)
+        self.page.on("response", self._on_response)
+
+        if config.INTERCEPT_NETWORK:
+            await self.page.route("**/*", self._route_request)
+            self.network_interception_enabled = True
+            logger.info("Playwright route interception enabled")
         
         # Initialize memory if enabled
         if memory_enabled and self._memory_enabled:
@@ -161,12 +188,24 @@ class EnhancedAgentBrowser:
     
     async def _on_request(self, request: Request):
         """Log network requests"""
-        self.network_logger.log_request({
-            "url": request.url,
-            "method": request.method,
-            "headers": dict(request.headers),
-            "timestamp": datetime.now().isoformat()
-        })
+        request_key = str(id(request))
+        self._request_started[request_key] = time.time()
+
+        if config.LOG_REQUESTS:
+            self.network_logger.log_request({
+                "url": request.url,
+                "method": request.method,
+                "headers": dict(request.headers),
+                "timestamp": datetime.now().isoformat()
+            })
+
+        # Capture in interceptor if not already captured by route handler.
+        if self.interceptor.is_enabled and not self.network_interception_enabled:
+            self.interceptor.capture_request(
+                method=request.method,
+                url=request.url,
+                headers=dict(request.headers)
+            )
         
         # Check webhook triggers
         self.webhooks.check_triggers(
@@ -177,11 +216,49 @@ class EnhancedAgentBrowser:
     
     async def _on_response(self, response: Response):
         """Log network responses"""
-        self.network_logger.log_response({
-            "url": response.url,
-            "status": response.status,
-            "timestamp": datetime.now().isoformat()
-        })
+        if config.LOG_RESPONSES:
+            self.network_logger.log_response({
+                "url": response.url,
+                "status": response.status,
+                "timestamp": datetime.now().isoformat()
+            })
+
+        if self.interceptor.is_enabled:
+            request = response.request
+            request_key = str(id(request))
+            started_at = self._request_started.pop(request_key, None)
+            duration_ms = (time.time() - started_at) * 1000 if started_at else 0
+            self.interceptor.capture_response(
+                request_id=request.url,
+                status=response.status,
+                headers=dict(response.headers),
+                duration_ms=duration_ms
+            )
+
+    async def _route_request(self, route, request):
+        """Playwright route hook for request mocking and metric capture."""
+        mock = self.interceptor.capture_request(
+            method=request.method,
+            url=request.url,
+            headers=dict(request.headers)
+        )
+
+        if mock:
+            await route.fulfill(
+                status=mock.get("status", 200),
+                headers=mock.get("headers", {}),
+                body=mock.get("body") or ""
+            )
+            self.interceptor.capture_response(
+                request_id=request.url,
+                status=mock.get("status", 200),
+                headers=mock.get("headers", {}),
+                body=mock.get("body"),
+                duration_ms=0
+            )
+            return
+
+        await route.continue_()
     
     # === NAVIGATION ===
     
@@ -470,7 +547,14 @@ class EnhancedAgentBrowser:
     
     async def set_local_storage(self, data: Dict):
         """Set localStorage"""
-        await self.page.evaluate(f"() => {{ localStorage.setObject({json.dumps(data)}); }}")
+        await self.page.evaluate(
+            """(payload) => {
+                for (const [key, value] of Object.entries(payload || {})) {
+                    localStorage.setItem(key, JSON.stringify(value));
+                }
+            }""",
+            data
+        )
     
     # === SESSION ===
     

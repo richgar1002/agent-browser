@@ -42,6 +42,11 @@ class BrowserMemory:
     
     def _init_client(self):
         """Initialize Supabase client"""
+        if not SUPABASE_KEY:
+            logger.warning("SUPABASE_KEY is not configured; memory integration is disabled")
+            self.client = None
+            return
+
         try:
             from client_production import create_memory_client, ClientConfig
             

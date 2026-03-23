@@ -9,6 +9,7 @@ from pydantic import BaseModel, field_validator
 from typing import Optional, List, Dict
 import base64
 import asyncio
+from contextvars import ContextVar
 
 from enhanced_browser import create_browser, EnhancedAgentBrowser
 from security import (
@@ -29,14 +30,55 @@ app = FastAPI(title="Agent Browser API - Enhanced")
 # Add CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=config.CORS_ALLOW_ORIGINS,
+    allow_credentials=config.CORS_ALLOW_CREDENTIALS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Global browser instance
-browser: Optional[EnhancedAgentBrowser] = None
+_browser_instances: Dict[str, EnhancedAgentBrowser] = {}
+_browser_locks: Dict[str, asyncio.Lock] = {}
+_browser_manager_lock = asyncio.Lock()
+_current_browser: ContextVar[Optional[EnhancedAgentBrowser]] = ContextVar(
+    "current_browser",
+    default=None
+)
+
+
+class BrowserProxy:
+    """Request-scoped browser proxy backed by ContextVar."""
+
+    def _current(self) -> EnhancedAgentBrowser:
+        browser = _current_browser.get()
+        if browser is None:
+            raise RuntimeError(
+                "No browser bound to this request. Provide X-Session-Name and use a browser endpoint."
+            )
+        return browser
+
+    def __getattr__(self, name):
+        return getattr(self._current(), name)
+
+
+browser: BrowserProxy = BrowserProxy()
+
+
+async def _get_or_create_browser(session_name: str) -> EnhancedAgentBrowser:
+    """Get an existing browser for a session or create one lazily."""
+    existing = _browser_instances.get(session_name)
+    if existing:
+        return existing
+
+    async with _browser_manager_lock:
+        existing = _browser_instances.get(session_name)
+        if existing:
+            return existing
+
+        instance = create_browser(session_name)
+        await instance.start(memory_enabled=True)
+        _browser_instances[session_name] = instance
+        _browser_locks[session_name] = asyncio.Lock()
+        return instance
 
 
 # === MIDDLEWARE ===
@@ -56,9 +98,44 @@ async def security_middleware(request: Request, call_next):
                 "retry_after": rate_info.get("retry_after", 60)
             }
         )
+
+    # API key enforcement (except health/docs and preflight)
+    public_paths = {"/health", "/docs", "/redoc", "/openapi.json"}
+    if (
+        SecurityConfig.AUTH_REQUIRED
+        and request.method != "OPTIONS"
+        and request.url.path not in public_paths
+    ):
+        api_key = request.headers.get("X-Api-Key", "")
+        valid, _ = auth_manager.verify_key(api_key)
+        if not valid:
+            return JSONResponse(
+                status_code=401,
+                content={"error": "Invalid or missing API key"}
+            )
     
+    # Paths that do not require a browser context.
+    no_browser_paths = {
+        "/health", "/docs", "/redoc", "/openapi.json", "/auth/key", "/auth/keys"
+    }
+
+    if request.url.path in no_browser_paths:
+        response = await call_next(request)
+    else:
+        session_name = request.headers.get("X-Session-Name", "default").strip() or "default"
+        request.state.session_name = session_name
+        browser_instance = await _get_or_create_browser(session_name)
+        request.state.browser = browser_instance
+
+        session_lock = _browser_locks[session_name]
+        token = _current_browser.set(browser_instance)
+        try:
+            async with session_lock:
+                response = await call_next(request)
+        finally:
+            _current_browser.reset(token)
+
     # CSP headers
-    response = await call_next(request)
     for header, value in csp_middleware.get_headers().items():
         response.headers[header] = value
     
@@ -199,16 +276,22 @@ async def list_keys():
 
 @app.on_event("startup")
 async def startup():
-    global browser
-    browser = create_browser("default")
-    await browser.start(memory_enabled=True)
+    if SecurityConfig.AUTH_REQUIRED and len(auth_manager.valid_keys) == 0:
+        raise RuntimeError(
+            "AUTH_REQUIRED is true but no API keys are configured. "
+            "Set AGENT_BROWSER_API_KEY or set AUTH_REQUIRED=false for dev only."
+        )
 
 
 @app.on_event("shutdown")
 async def shutdown():
-    global browser
-    if browser:
-        await browser.close()
+    for browser_instance in list(_browser_instances.values()):
+        try:
+            await browser_instance.close()
+        except Exception:
+            pass
+    _browser_instances.clear()
+    _browser_locks.clear()
 
 
 # === NAVIGATION ===
@@ -566,11 +649,13 @@ async def security_config():
 
 @app.get("/health")
 async def health():
-    global browser
+    active_sessions = len(_browser_instances)
+    any_browser = next(iter(_browser_instances.values()), None)
     return {
         "status": "healthy",
-        "browser": "running" if browser else "stopped",
-        "memory": browser.memory is not None if browser else False,
+        "browser": "running" if active_sessions > 0 else "stopped",
+        "memory": any_browser.memory is not None if any_browser else False,
+        "sessions": active_sessions,
         "features": {
             "memory": True,
             "forms": True,

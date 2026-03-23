@@ -12,11 +12,28 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 import config
-from enhanced_browser import create_browser
+try:
+    from enhanced_browser import create_browser
+    _BROWSER_IMPORT_ERROR = None
+except Exception as exc:
+    create_browser = None  # type: ignore[assignment]
+    _BROWSER_IMPORT_ERROR = exc
+
+
+def _ensure_browser_available():
+    """Fail fast with dependency guidance."""
+    if _BROWSER_IMPORT_ERROR:
+        print(
+            "Browser dependencies are missing. Install with:\n"
+            "  pip install -r requirements.txt\n"
+            "  playwright install chromium"
+        )
+        raise SystemExit(2) from _BROWSER_IMPORT_ERROR
 
 
 async def cmd_goto(args):
     """Navigate to URL"""
+    _ensure_browser_available()
     async with create_browser(args.session) as browser:
         await browser.go_to(args.url)
         print(f"Navigated to: {args.url}")
@@ -32,6 +49,7 @@ async def cmd_goto(args):
 
 async def cmd_screenshot(args):
     """Take screenshot"""
+    _ensure_browser_available()
     async with create_browser(args.session) as browser:
         if args.url:
             await browser.go_to(args.url)
@@ -42,6 +60,7 @@ async def cmd_screenshot(args):
 
 async def cmd_click(args):
     """Click element"""
+    _ensure_browser_available()
     async with create_browser(args.session) as browser:
         if args.url:
             await browser.go_to(args.url)
@@ -53,6 +72,7 @@ async def cmd_click(args):
 
 async def cmd_fill(args):
     """Fill form field"""
+    _ensure_browser_available()
     async with create_browser(args.session) as browser:
         if args.url:
             await browser.go_to(args.url)
@@ -64,6 +84,7 @@ async def cmd_fill(args):
 
 async def cmd_evaluate(args):
     """Evaluate JavaScript"""
+    _ensure_browser_available()
     async with create_browser(args.session) as browser:
         if args.url:
             await browser.go_to(args.url)
@@ -74,6 +95,7 @@ async def cmd_evaluate(args):
 
 async def cmd_network(args):
     """Get network log"""
+    _ensure_browser_available()
     async with create_browser(args.session) as browser:
         if args.url:
             await browser.go_to(args.url)
@@ -90,6 +112,7 @@ async def cmd_network(args):
 
 async def cmd_memory_save(args):
     """Save page to memory"""
+    _ensure_browser_available()
     async with create_browser(args.session) as browser:
         if args.url:
             await browser.go_to(args.url)
@@ -101,6 +124,7 @@ async def cmd_memory_save(args):
 
 async def cmd_memory_search(args):
     """Search memory"""
+    _ensure_browser_available()
     async with create_browser(args.session) as browser:
         results = browser.search_memory(args.query, args.limit)
         
@@ -115,6 +139,7 @@ async def cmd_memory_search(args):
 
 async def cmd_analyze(args):
     """Analyze screenshot"""
+    _ensure_browser_available()
     async with create_browser(args.session) as browser:
         if args.url:
             await browser.go_to(args.url)
@@ -132,6 +157,7 @@ async def cmd_analyze(args):
 
 async def cmd_record_start(args):
     """Start action recording"""
+    _ensure_browser_available()
     async with create_browser(args.session) as browser:
         browser.start_recording(args.name, args.description or "")
         print(f"Recording: {args.name}")
@@ -140,6 +166,7 @@ async def cmd_record_start(args):
 
 async def cmd_record_stop(args):
     """Stop action recording"""
+    _ensure_browser_available()
     async with create_browser(args.session) as browser:
         workflow = browser.stop_recording()
         if workflow:
@@ -150,6 +177,7 @@ async def cmd_record_stop(args):
 
 async def cmd_forms_list(args):
     """List forms"""
+    _ensure_browser_available()
     async with create_browser(args.session) as browser:
         forms = browser.form_builder.list_forms()
         
@@ -163,6 +191,7 @@ async def cmd_forms_list(args):
 
 async def cmd_webhooks_list(args):
     """List webhooks"""
+    _ensure_browser_available()
     async with create_browser(args.session) as browser:
         webhooks = browser.webhooks.list_webhooks()
         
@@ -177,6 +206,7 @@ async def cmd_webhooks_list(args):
 
 async def cmd_session_list(args):
     """List sessions"""
+    _ensure_browser_available()
     async with create_browser(args.session) as browser:
         sessions = browser.session_pool.list_sessions()
         
@@ -190,6 +220,7 @@ async def cmd_session_list(args):
 
 async def cmd_metrics(args):
     """Get network metrics"""
+    _ensure_browser_available()
     async with create_browser(args.session) as browser:
         if args.url:
             await browser.go_to(args.url)

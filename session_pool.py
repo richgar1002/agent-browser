@@ -2,15 +2,20 @@
 Session Pool - Manage multiple browser contexts
 """
 import asyncio
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Any
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 import logging
 
-import playwright.async_api as pw
-from playwright.async_api import async_playwright, Browser, BrowserContext
+try:
+    from playwright.async_api import async_playwright, Browser
+    _PLAYWRIGHT_IMPORT_ERROR = None
+except ModuleNotFoundError as exc:
+    async_playwright = None  # type: ignore[assignment]
+    Browser = Any  # type: ignore[misc,assignment]
+    _PLAYWRIGHT_IMPORT_ERROR = exc
 
-from enhanced_browser import create_enhanced_browser, EnhancedAgentBrowser
+from enhanced_browser import create_browser, EnhancedAgentBrowser
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +42,11 @@ class SessionPool:
     
     async def start(self):
         """Initialize the pool"""
+        if _PLAYWRIGHT_IMPORT_ERROR:
+            raise RuntimeError(
+                "Playwright is not installed. Run `pip install -r requirements.txt` "
+                "and `playwright install chromium`."
+            ) from _PLAYWRIGHT_IMPORT_ERROR
         self.playwright = await async_playwright().start()
         self.browser = await self.playwright.chromium.launch(headless=True)
         logger.info("Session pool started")
@@ -65,7 +75,7 @@ class SessionPool:
                 # Evict oldest idle session
                 await self._evict_oldest()
             
-            browser = create_enhanced_browser(session_name)
+            browser = create_browser(session_name)
             await browser.start()
             
             session = PooledSession(
@@ -97,7 +107,7 @@ class SessionPool:
         except Exception:
             pass
         
-        session.browser = create_enhanced_browser(session.name)
+        session.browser = create_browser(session.name)
         await session.browser.start()
         session.last_used = datetime.now()
         logger.info(f"Recreated session: {session.name}")

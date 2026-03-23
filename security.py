@@ -7,11 +7,15 @@ Security Middleware for Agent Browser API
 """
 import time
 import hashlib
+import ipaddress
+import os
+import socket
 from functools import wraps
 from typing import Dict, List, Optional
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 import logging
+from urllib.parse import urlparse
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -21,9 +25,10 @@ logger = logging.getLogger(__name__)
 
 class SecurityConfig:
     """Security configuration"""
-    # API Key
-    API_KEY = "your-secret-key-change-me"
-    API_KEY_HASH = None  # Will be computed
+    # Authentication
+    AUTH_REQUIRED = os.getenv("AUTH_REQUIRED", "true").lower() == "true"
+    DEFAULT_API_KEY = os.getenv("AGENT_BROWSER_API_KEY", "")
+    API_KEY_HASH = None
     
     # Rate limiting
     RATE_LIMIT_REQUESTS = 100  # requests per window
@@ -33,6 +38,7 @@ class SecurityConfig:
     MAX_REQUEST_SIZE = 10 * 1024 * 1024  # 10MB
     ALLOWED_URL_SCHEMES = ["http", "https"]
     BLOCKED_URL_PATTERNS = []
+    ALLOW_PRIVATE_NETWORK = os.getenv("ALLOW_PRIVATE_NETWORK", "false").lower() == "true"
     
     # CSP
     CSP_ENABLED = True
@@ -41,7 +47,11 @@ class SecurityConfig:
     @classmethod
     def init(cls):
         """Initialize security config"""
-        cls.API_KEY_HASH = hashlib.sha256(cls.API_KEY.encode()).hexdigest()
+        cls.API_KEY_HASH = (
+            hashlib.sha256(cls.DEFAULT_API_KEY.encode()).hexdigest()
+            if cls.DEFAULT_API_KEY
+            else None
+        )
 
 
 # === RATE LIMITING ===
@@ -128,12 +138,17 @@ class AuthManager:
     
     def _init_default_keys(self):
         """Initialize default API keys"""
-        # Add default key
-        self.add_key(
-            key="secret",
-            name="default",
-            expires_days=365
-        )
+        if SecurityConfig.DEFAULT_API_KEY:
+            self.add_key(
+                key=SecurityConfig.DEFAULT_API_KEY,
+                name="default",
+                expires_days=365
+            )
+        else:
+            logger.warning(
+                "No AGENT_BROWSER_API_KEY configured. Set AUTH_REQUIRED=false for dev-only mode "
+                "or configure AGENT_BROWSER_API_KEY."
+            )
     
     def add_key(self, key: str, name: str, expires_days: int = None) -> str:
         """Add an API key"""
@@ -197,6 +212,47 @@ class RequestValidator:
         # Check scheme
         if not any(url.startswith(s + "://") for s in SecurityConfig.ALLOWED_URL_SCHEMES):
             return False, f"URL must use {' or '.join(SecurityConfig.ALLOWED_URL_SCHEMES)}"
+
+        parsed = urlparse(url)
+        hostname = (parsed.hostname or "").strip().lower()
+        if not hostname:
+            return False, "URL host is required"
+
+        # Block localhost-style hosts.
+        if hostname in {"localhost", "127.0.0.1", "::1"}:
+            return False, "Localhost targets are not allowed"
+
+        # Block private/reserved literals unless explicitly enabled.
+        if not SecurityConfig.ALLOW_PRIVATE_NETWORK:
+            try:
+                ip = ipaddress.ip_address(hostname)
+                if any([
+                    ip.is_private,
+                    ip.is_loopback,
+                    ip.is_link_local,
+                    ip.is_reserved,
+                    ip.is_multicast,
+                    ip.is_unspecified
+                ]):
+                    return False, "Private/internal network targets are not allowed"
+            except ValueError:
+                # Hostname is not an IP literal. Best-effort DNS check.
+                try:
+                    for res in socket.getaddrinfo(hostname, None):
+                        addr = res[4][0]
+                        ip = ipaddress.ip_address(addr)
+                        if any([
+                            ip.is_private,
+                            ip.is_loopback,
+                            ip.is_link_local,
+                            ip.is_reserved,
+                            ip.is_multicast,
+                            ip.is_unspecified
+                        ]):
+                            return False, "Resolved private/internal network target"
+                except socket.gaierror:
+                    # If DNS cannot resolve at validation time, defer to navigation error.
+                    pass
         
         # Check blocked patterns
         for pattern in SecurityConfig.BLOCKED_URL_PATTERNS:

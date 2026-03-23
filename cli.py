@@ -8,17 +8,36 @@ import sys
 import json
 from pathlib import Path
 
-from browser import create_browser
 from session_manager import SessionManager
+
+try:
+    from browser import create_browser
+    _BROWSER_IMPORT_ERROR = None
+except Exception as exc:
+    create_browser = None  # type: ignore[assignment]
+    _BROWSER_IMPORT_ERROR = exc
+
+
+def _ensure_browser_available():
+    """Fail fast with dependency guidance."""
+    if _BROWSER_IMPORT_ERROR:
+        print(
+            "Browser dependencies are missing. Install with:\n"
+            "  pip install -r requirements.txt\n"
+            "  playwright install chromium"
+        )
+        raise SystemExit(2) from _BROWSER_IMPORT_ERROR
 
 async def cmd_goto(args):
     """Navigate to URL"""
+    _ensure_browser_available()
     async with create_browser(args.session) as browser:
         await browser.go_to(args.url)
         print(f"Navigated to: {browser.current_url}")
 
 async def cmd_screenshot(args):
     """Take screenshot"""
+    _ensure_browser_available()
     async with create_browser(args.session) as browser:
         if args.url:
             await browser.go_to(args.url)
@@ -28,6 +47,7 @@ async def cmd_screenshot(args):
 
 async def cmd_click(args):
     """Click element"""
+    _ensure_browser_available()
     async with create_browser(args.session) as browser:
         if args.url:
             await browser.go_to(args.url)
@@ -37,6 +57,7 @@ async def cmd_click(args):
 
 async def cmd_fill(args):
     """Fill input"""
+    _ensure_browser_available()
     async with create_browser(args.session) as browser:
         if args.url:
             await browser.go_to(args.url)
@@ -46,6 +67,7 @@ async def cmd_fill(args):
 
 async def cmd_get_text(args):
     """Get text from element"""
+    _ensure_browser_available()
     async with create_browser(args.session) as browser:
         if args.url:
             await browser.go_to(args.url)
@@ -55,6 +77,7 @@ async def cmd_get_text(args):
 
 async def cmd_evaluate(args):
     """Evaluate JavaScript"""
+    _ensure_browser_available()
     async with create_browser(args.session) as browser:
         if args.url:
             await browser.go_to(args.url)
@@ -84,6 +107,7 @@ async def cmd_session_delete(args):
 
 async def cmd_network(args):
     """Get network log"""
+    _ensure_browser_available()
     async with create_browser(args.session) as browser:
         if args.url:
             await browser.go_to(args.url)
