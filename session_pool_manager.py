@@ -5,7 +5,7 @@ Rotate browser instances, manage profiles, proxy support
 import logging
 import uuid
 import time
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -50,9 +50,7 @@ class BrowserSession:
     last_used: str = None
     use_count: int = 0
     error: str = None
-    # Actual browser instance would be stored here
-    _browser: Any = None
-    
+
     def __post_init__(self):
         if self.created_at is None:
             self.created_at = datetime.now().isoformat()
